@@ -6,6 +6,9 @@ data/processed/
 *.parquet
 !data/.gitkeep
 
+# But allow web app data files for Vercel deployment
+!web/public/data/*.json
+
 # Python
 __pycache__/
 *.py[cod]
