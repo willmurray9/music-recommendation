@@ -6,14 +6,19 @@ interface Track {
   artist: string;
   album: string;
   genres: string[];
+  tags?: string[];
   popularity: number;
   playlistCount: number;
+  support?: number;
+  durationMs?: number;
+  releaseYear?: number | null;
+  modelVersion?: string;
 }
 
 interface TrackListProps {
   title: string;
   tracks: { track: Track; index: number }[];
-  onRemove?: (index: number) => void;
+  onRemove?: (trackId: string) => void;
   onSelect?: (track: Track, index: number) => void;
   emptyMessage?: string;
   showScore?: boolean;
@@ -80,7 +85,7 @@ export default function TrackList({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onRemove(index);
+                    onRemove(track.id);
                   }}
                   className="text-spotify-light hover:text-white transition p-1"
                 >

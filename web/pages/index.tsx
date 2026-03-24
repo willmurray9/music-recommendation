@@ -22,8 +22,13 @@ interface Track {
   artist: string;
   album: string;
   genres: string[];
+  tags?: string[];
   popularity: number;
   playlistCount: number;
+  support?: number;
+  durationMs?: number;
+  releaseYear?: number | null;
+  modelVersion?: string;
 }
 
 interface RecommendationResult {
@@ -145,8 +150,8 @@ export default function Home() {
   };
 
   // Remove seed track
-  const handleRemoveSeed = (index: number) => {
-    setSeedTracks(seedTracks.filter((s) => s.index !== index));
+  const handleRemoveSeed = (trackId: string) => {
+    setSeedTracks(seedTracks.filter((s) => s.track.id !== trackId));
   };
 
   // Handle track selection from visualization
@@ -243,8 +248,8 @@ export default function Home() {
                   <Visualization3D
                     coords={tsneCoords}
                     tracks={allTracks}
-                    selectedIndices={seedTracks.map((s) => s.index)}
-                    recommendedIndices={recommendations.map((r) => r.index)}
+                    selectedIndices={seedTracks.map((s) => s.index).filter((index) => index >= 0)}
+                    recommendedIndices={recommendations.map((r) => r.index).filter((index) => index >= 0)}
                     onTrackSelect={handleVizTrackSelect}
                     colorBy={colorBy}
                   />

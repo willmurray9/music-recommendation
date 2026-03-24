@@ -1,0 +1,354 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+import math
+
+import numpy as np
+import pandas as pd
+from gensim.models import KeyedVectors
+from sklearn.ensemble import HistGradientBoostingClassifier
+
+from .config import PipelineConfig
+from .metrics import (
+    catalog_coverage,
+    mean_popularity_percentile,
+    mrr_at_k,
+    ndcg_at_k,
+    recall_at_k,
+    same_artist_rate,
+    unique_artist_coverage,
+    intra_list_diversity,
+)
+from .paths import RunLayout
+from .retrieval import retrieve_candidates
+from .utils import cosine_similarity, percentile_rank, read_json, read_jsonl, write_json
+
+
+FEATURE_NAMES = [
+    "mean_seed_cosine",
+    "max_seed_cosine",
+    "seed_neighbor_hits",
+    "same_artist",
+    "genre_overlap",
+    "tag_overlap",
+    "release_year_distance",
+    "duration_delta",
+    "popularity_percentile",
+    "playlist_support",
+]
+
+
+@dataclass(frozen=True)
+class CandidateRow:
+    track_uri: str
+    features: list[float]
+    label: int
+
+
+def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
+    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet")
+    tags_df = pd.read_parquet(layout.normalized_dir / "track_tags.parquet")
+    best_retrieval = read_json(layout.manifests_dir / "train_retrieval.json")
+    wv = KeyedVectors.load(str(layout.root / best_retrieval["model_path"]))
+    metadata = _build_metadata(track_df, tags_df)
+
+    train_rows = read_jsonl(layout.splits_dir / "train.jsonl")
+    val_rows = read_jsonl(layout.splits_dir / "val.jsonl")
+    popularity_values = np.sort(track_df["playlist_support"].fillna(0).astype(float).to_numpy())
+
+    train_examples = _build_candidate_rows(
+        wv,
+        train_rows,
+        metadata,
+        popularity_values,
+        config.retrieval.candidate_pool_size,
+        config.reranker.max_seed_neighbor_probe,
+    )
+    X_train = np.array([row.features for row in train_examples], dtype=np.float32)
+    y_train = np.array([row.label for row in train_examples], dtype=np.int8)
+    if len(np.unique(y_train)) < 2:
+        raise RuntimeError("Reranker training data is degenerate; no positive/negative separation")
+
+    model = HistGradientBoostingClassifier(
+        max_iter=config.reranker.max_iter,
+        max_depth=config.reranker.max_depth,
+        learning_rate=config.reranker.learning_rate,
+        l2_regularization=config.reranker.l2_regularization,
+        random_state=config.reranker.random_seed,
+    )
+    model.fit(X_train, y_train)
+
+    retrieval_metrics = best_retrieval["metrics"]
+    rerank_metrics = evaluate_reranker(
+        model,
+        wv,
+        val_rows,
+        metadata,
+        popularity_values,
+        config.retrieval.candidate_pool_size,
+        config.reranker.max_seed_neighbor_probe,
+    )
+    improvement = (
+        (rerank_metrics["ndcg@10"] - retrieval_metrics["ndcg@10"]) / max(retrieval_metrics["ndcg@10"], 1e-9)
+    )
+    coverage_ok = rerank_metrics["catalog_coverage@50"] >= retrieval_metrics["catalog_coverage@50"] * 0.95
+    diversity_ok = rerank_metrics["intra_list_diversity"] >= retrieval_metrics["intra_list_diversity"] * 0.95
+    promoted = improvement >= 0.10 and coverage_ok and diversity_ok
+
+    export_payload = export_hist_gradient_boosting(model)
+    write_json(layout.models_dir / "reranker_model.json", export_payload)
+
+    summary = {
+        "feature_names": FEATURE_NAMES,
+        "training_rows": int(len(train_examples)),
+        "promoted": promoted,
+        "retrieval_val_metrics": retrieval_metrics,
+        "reranker_val_metrics": rerank_metrics,
+        "ndcg10_improvement_ratio": improvement,
+        "coverage_ok": coverage_ok,
+        "diversity_ok": diversity_ok,
+        "model_path": str((layout.models_dir / "reranker_model.json").relative_to(layout.root)),
+    }
+    write_json(layout.manifests_dir / "train_reranker.json", summary)
+    return summary
+
+
+def evaluate_reranker(
+    model: HistGradientBoostingClassifier,
+    wv: KeyedVectors,
+    split_rows: list[dict],
+    metadata: dict[str, dict],
+    popularity_values: np.ndarray,
+    candidate_pool_size: int,
+    seed_neighbor_probe: int,
+) -> dict[str, float]:
+    recommendation_lists: list[list[str]] = []
+    artist_lookup = {uri: row.get("artist_uri") for uri, row in metadata.items()}
+    popularity_lookup = {
+        uri: percentile_rank(popularity_values, float(row.get("playlist_support", 0))) for uri, row in metadata.items()
+    }
+    vector_lookup = {uri: wv[uri] for uri in wv.key_to_index.keys()}
+    metrics = defaultdict(list)
+
+    for row in split_rows:
+        reranked = rerank_candidates(
+            model,
+            wv,
+            row["seed_tracks"],
+            metadata,
+            popularity_values,
+            topn=50,
+            candidate_pool_size=candidate_pool_size,
+            seed_neighbor_probe=seed_neighbor_probe,
+        )
+        positives = set(row["positive_tracks"])
+        recommendation_lists.append(reranked)
+        metrics["recall@10"].append(recall_at_k(reranked, positives, 10))
+        metrics["recall@50"].append(recall_at_k(reranked, positives, 50))
+        metrics["ndcg@10"].append(ndcg_at_k(reranked, positives, 10))
+        metrics["ndcg@50"].append(ndcg_at_k(reranked, positives, 50))
+        metrics["mrr@10"].append(mrr_at_k(reranked, positives, 10))
+        metrics["same_artist_rate"].append(same_artist_rate(reranked, artist_lookup))
+
+    summary = {name: float(np.mean(values)) if values else 0.0 for name, values in metrics.items()}
+    summary["catalog_coverage@50"] = catalog_coverage(recommendation_lists, len(metadata))
+    summary["unique_artist_coverage@50"] = unique_artist_coverage(recommendation_lists, artist_lookup)
+    summary["mean_popularity_percentile"] = mean_popularity_percentile(recommendation_lists, popularity_lookup)
+    summary["intra_list_diversity"] = intra_list_diversity(recommendation_lists, vector_lookup)
+    return summary
+
+
+def rerank_candidates(
+    model: HistGradientBoostingClassifier,
+    wv: KeyedVectors,
+    seed_tracks: list[str],
+    metadata: dict[str, dict],
+    popularity_values: np.ndarray,
+    topn: int,
+    candidate_pool_size: int,
+    seed_neighbor_probe: int,
+) -> list[str]:
+    candidates = retrieve_candidates(wv, seed_tracks, topn=candidate_pool_size)
+    candidate_rows = _candidate_features(
+        wv,
+        seed_tracks,
+        candidates,
+        metadata,
+        popularity_values,
+        seed_neighbor_probe,
+    )
+    if not candidate_rows:
+        return []
+    X = np.array([row.features for row in candidate_rows], dtype=np.float32)
+    scores = model.decision_function(X)
+    base_scores = {row.track_uri: float(score) for row, score in zip(candidate_rows, scores)}
+    ordered = sorted(candidate_rows, key=lambda row: base_scores[row.track_uri], reverse=True)
+    return _mmr_select(ordered, base_scores, metadata, wv, seed_tracks, topn)
+
+
+def _build_candidate_rows(
+    wv: KeyedVectors,
+    split_rows: list[dict],
+    metadata: dict[str, dict],
+    popularity_values: np.ndarray,
+    candidate_pool_size: int,
+    seed_neighbor_probe: int,
+) -> list[CandidateRow]:
+    examples: list[CandidateRow] = []
+    for row in split_rows:
+        candidates = retrieve_candidates(wv, row["seed_tracks"], topn=candidate_pool_size)
+        candidate_rows = _candidate_features(
+            wv,
+            row["seed_tracks"],
+            candidates,
+            metadata,
+            popularity_values,
+            seed_neighbor_probe,
+            positives=set(row["positive_tracks"]),
+        )
+        examples.extend(candidate_rows)
+    return examples
+
+
+def _candidate_features(
+    wv: KeyedVectors,
+    seed_tracks: list[str],
+    candidates: list[str],
+    metadata: dict[str, dict],
+    popularity_values: np.ndarray,
+    seed_neighbor_probe: int,
+    positives: set[str] | None = None,
+) -> list[CandidateRow]:
+    positives = positives or set()
+    valid_seeds = [seed for seed in seed_tracks if seed in wv]
+    if not valid_seeds:
+        return []
+    seed_vectors = [wv[seed] for seed in valid_seeds]
+    seed_neighbor_sets = []
+    for seed in valid_seeds:
+        neighbors = wv.most_similar(seed, topn=seed_neighbor_probe)
+        seed_neighbor_sets.append({uri for uri, _ in neighbors})
+
+    seed_years = [metadata[seed].get("release_year") for seed in valid_seeds if metadata.get(seed, {}).get("release_year")]
+    seed_duration = np.mean([metadata[seed].get("duration_ms", 0) for seed in valid_seeds if metadata.get(seed, {}).get("duration_ms")])
+    seed_genres = set().union(*(metadata.get(seed, {}).get("genres", []) for seed in valid_seeds))
+    seed_tags = set().union(*(metadata.get(seed, {}).get("tags", []) for seed in valid_seeds))
+    seed_artists = {metadata.get(seed, {}).get("artist_uri") for seed in valid_seeds}
+
+    rows: list[CandidateRow] = []
+    for candidate in candidates:
+        if candidate not in wv or candidate not in metadata:
+            continue
+        candidate_vector = wv[candidate]
+        seed_cosines = [cosine_similarity(candidate_vector, seed_vector) for seed_vector in seed_vectors]
+        candidate_meta = metadata[candidate]
+        release_year = candidate_meta.get("release_year")
+        year_distance = abs(release_year - float(np.mean(seed_years))) if release_year and seed_years else 99.0
+        duration_delta = abs(candidate_meta.get("duration_ms", 0) - seed_duration) if seed_duration else 0.0
+        row = CandidateRow(
+            track_uri=candidate,
+            features=[
+                float(np.mean(seed_cosines)),
+                float(np.max(seed_cosines)),
+                float(sum(candidate in seed_neighbors for seed_neighbors in seed_neighbor_sets)),
+                1.0 if candidate_meta.get("artist_uri") in seed_artists else 0.0,
+                float(len(seed_genres & set(candidate_meta.get("genres", [])))),
+                float(len(seed_tags & set(candidate_meta.get("tags", [])))),
+                float(year_distance),
+                float(duration_delta),
+                percentile_rank(popularity_values, float(candidate_meta.get("playlist_support", 0))),
+                float(candidate_meta.get("playlist_support", 0)),
+            ],
+            label=1 if candidate in positives else 0,
+        )
+        rows.append(row)
+    return rows
+
+
+def _build_metadata(track_df: pd.DataFrame, tags_df: pd.DataFrame) -> dict[str, dict]:
+    tags_map = (
+        tags_df.groupby("track_uri")["tag"].apply(list).to_dict()
+        if not tags_df.empty
+        else {}
+    )
+    metadata = track_df.set_index("track_uri").to_dict("index")
+    for track_uri, row in metadata.items():
+        row["genres"] = _normalize_list(row.get("genres"))
+        row["tags"] = tags_map.get(track_uri, _normalize_list(row.get("tags")))
+    return metadata
+
+
+def _normalize_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if hasattr(value, "tolist"):
+        return [str(item) for item in value.tolist()]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []
+
+
+def export_hist_gradient_boosting(model: HistGradientBoostingClassifier) -> dict:
+    trees = []
+    for predictors in model._predictors:
+        tree = predictors[0]
+        nodes = []
+        for node in tree.nodes:
+            nodes.append(
+                {
+                    "value": float(node["value"]),
+                    "feature_idx": int(node["feature_idx"]),
+                    "num_threshold": float(node["num_threshold"]),
+                    "left": int(node["left"]),
+                    "right": int(node["right"]),
+                    "is_leaf": bool(node["is_leaf"]),
+                }
+            )
+        trees.append({"nodes": nodes})
+    return {
+        "feature_names": FEATURE_NAMES,
+        "baseline": float(model._baseline_prediction[0][0]),
+        "trees": trees,
+    }
+
+
+def _mmr_select(
+    ordered_rows: list[CandidateRow],
+    base_scores: dict[str, float],
+    metadata: dict[str, dict],
+    wv: KeyedVectors,
+    seed_tracks: list[str],
+    topn: int,
+) -> list[str]:
+    seed_artists = {metadata.get(seed, {}).get("artist_uri") for seed in seed_tracks}
+    selected: list[str] = []
+    selected_artists: set[str] = set()
+    lambda_weight = 0.75
+
+    while ordered_rows and len(selected) < topn:
+        best_candidate = None
+        best_score = -math.inf
+        for row in ordered_rows:
+            artist_uri = metadata.get(row.track_uri, {}).get("artist_uri")
+            if artist_uri in seed_artists and artist_uri in selected_artists:
+                continue
+            redundancy = 0.0
+            if selected:
+                redundancy = max(
+                    cosine_similarity(wv[row.track_uri], wv[chosen])
+                    for chosen in selected
+                    if chosen in wv
+                )
+            mmr_score = lambda_weight * base_scores[row.track_uri] - (1 - lambda_weight) * redundancy
+            if best_candidate is None or mmr_score > best_score:
+                best_candidate = row
+                best_score = mmr_score
+        if best_candidate is None:
+            break
+        selected.append(best_candidate.track_uri)
+        artist_uri = metadata.get(best_candidate.track_uri, {}).get("artist_uri")
+        if artist_uri:
+            selected_artists.add(artist_uri)
+        ordered_rows = [row for row in ordered_rows if row.track_uri != best_candidate.track_uri]
+    return selected

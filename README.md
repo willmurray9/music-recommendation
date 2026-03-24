@@ -35,7 +35,8 @@ The web app allows you to:
 │   ├── 03_spotify_features.ipynb    # Fetch artist metadata
 │   └── 04_controllable_recommender.ipynb  # Recommender class
 ├── src/
-│   └── export_data.py    # Export data for web app
+│   ├── export_data.py    # Legacy one-shot export for the original web app
+│   └── recommender_v2/   # Scripted collection / training / evaluation pipeline
 └── web/                  # Next.js web application
 ```
 
@@ -64,9 +65,39 @@ Download the Spotify Million Playlist Dataset subset from Kaggle:
 
 The notebooks expect data in `~/.cache/kagglehub/datasets/himanshuwagh/spotify-million/`.
 
+## Recommender V2 Pipeline
+
+The repo now includes a scriptable training and evaluation pipeline under `src/recommender_v2/`.
+
+Commands:
+
+```bash
+python -m src.recommender_v2 collect_spotify --run-id my-run
+python -m src.recommender_v2 build_corpus --run-id my-run
+python -m src.recommender_v2 enrich_metadata --run-id my-run
+python -m src.recommender_v2 split_eval --run-id my-run
+python -m src.recommender_v2 train_retrieval --run-id my-run
+python -m src.recommender_v2 train_reranker --run-id my-run
+python -m src.recommender_v2 evaluate --run-id my-run
+python -m src.recommender_v2 export_web --run-id my-run
+```
+
+Configuration lives in `config/recommender_v2.toml`.
+
+Each run writes versioned artifacts under `data/runs/<run-id>/`, including raw JSONL payloads, normalized tables, eval splits, model artifacts, metrics, and exported web assets.
+
+`collect_spotify` defaults to a local MPD fallback if Spotify credentials are not provided. For live Spotify collection, set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`.
+
+Optional enrichment:
+
+- `LASTFM_API_KEY` enables Last.fm tag enrichment
+- `MUSICBRAINZ_ENABLE=1` enables MusicBrainz release-year lookups
+
 ## Notebooks
 
-Run these in order:
+The original notebooks are still useful for exploration, but they are no longer the required training path.
+
+Run these in order if you want to revisit the exploratory workflow:
 
 | Notebook | Description |
 |----------|-------------|
@@ -79,13 +110,16 @@ Run these in order:
 
 ### Generate Data Files
 
-First, export the data for the web app:
+For the legacy app bundle, export the data with:
 
 ```bash
 python src/export_data.py
 ```
 
-This creates ~49MB of data files in `web/public/data/`.
+For the V2 pipeline, `export_web` writes:
+
+- full recommendation/search artifacts to `web/data/server/current/`
+- visualization subset artifacts to `web/public/data/`
 
 ### Run Locally
 

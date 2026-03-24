@@ -3,6 +3,8 @@ import {
   loadTracks,
   loadEmbeddings,
   loadEmbeddingsMeta,
+  loadRerankerModel,
+  loadVisualizationIndexMap,
   buildTrackIndex,
   Track,
 } from '@/lib/embeddings';
@@ -50,10 +52,12 @@ export default async function handler(
   }
 
   try {
-    const [tracks, embeddings, meta] = await Promise.all([
+    const [tracks, embeddings, meta, rerankerModel, visualizationIndexMap] = await Promise.all([
       loadTracks(),
       loadEmbeddings(),
       loadEmbeddingsMeta(),
+      loadRerankerModel(),
+      loadVisualizationIndexMap(),
     ]);
 
     // Build track index if needed
@@ -97,12 +101,17 @@ export default async function handler(
         genres: body.genres,
         excludeGenres: body.excludeGenres,
         excludeArtists: body.excludeArtists,
+        rerankerModel,
+        visualizationIndexMap,
       }
     );
 
     res.status(200).json({
       recommendations,
-      seedTracks: validSeedTracks,
+      seedTracks: validSeedTracks.map(({ track, index }) => ({
+        track,
+        index: visualizationIndexMap.get(track.id) ?? -1,
+      })),
     });
   } catch (error) {
     console.error('Recommendation error:', error);

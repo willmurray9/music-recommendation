@@ -1,0 +1,60 @@
+[run]
+run_root = "data/runs"
+current_symlink = "data/runs/current"
+default_run_prefix = "recommender-v2"
+
+[collect]
+market = "US"
+max_playlists = 50000
+playlists_per_query = 20
+tracks_per_playlist = 200
+top_artists = 2000
+top_genres = 250
+year_buckets = [1990, 2000, 2010, 2020]
+query_keywords = ["workout", "party", "focus", "sad", "throwback", "summer", "chill"]
+retry_count = 3
+retry_backoff_seconds = 1.0
+local_mpd_path = ""
+
+[corpus]
+min_playlist_tracks = 5
+max_playlist_tracks = 200
+drop_duplicate_tracks = true
+
+[split]
+eligible_min_tracks = 10
+eligible_max_tracks = 100
+train_fraction = 0.8
+val_fraction = 0.1
+random_seed = 42
+min_seed_tracks = 3
+max_seed_tracks = 5
+min_positive_tracks = 2
+max_positive_tracks = 5
+
+[retrieval]
+vector_sizes = [128, 256]
+windows = [10, 20, 50]
+min_counts = [3, 5]
+negatives = [10, 20]
+epochs = 10
+sg = 1
+seed = 42
+workers = 1
+candidate_pool_size = 500
+
+[reranker]
+max_iter = 100
+max_depth = 6
+learning_rate = 0.1
+l2_regularization = 0.0
+random_seed = 42
+max_seed_neighbor_probe = 100
+
+[export]
+server_dir = "web/data/server/current"
+public_dir = "web/public/data"
+public_viz_tracks = 50000
+tsne_perplexity = 30
+tsne_iter = 1000
+tsne_random_state = 42

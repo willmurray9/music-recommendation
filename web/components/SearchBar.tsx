@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { debounce } from '@/lib/utils';
 
 interface Track {
@@ -9,8 +9,13 @@ interface Track {
   artist: string;
   album: string;
   genres: string[];
+  tags?: string[];
   popularity: number;
   playlistCount: number;
+  support?: number;
+  durationMs?: number;
+  releaseYear?: number | null;
+  modelVersion?: string;
 }
 
 interface SearchResult {
@@ -41,8 +46,8 @@ export default function SearchBar({ onTrackSelect, placeholder = 'Search for son
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const searchTracks = useCallback(
-    debounce(async (q: string) => {
+  const searchTracks = useMemo(
+    () => debounce(async (q: string) => {
       if (q.length < 2) {
         setResults([]);
         setIsOpen(false);

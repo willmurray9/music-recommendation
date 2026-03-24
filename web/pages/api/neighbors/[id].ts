@@ -1,8 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
-  loadTracks,
-  loadEmbeddings,
-  loadEmbeddingsMeta,
+  loadVisualizationTracks,
+  loadVisualizationEmbeddings,
+  loadVisualizationEmbeddingsMeta,
   buildTrackIndex,
   Track,
 } from '@/lib/embeddings';
@@ -45,9 +45,9 @@ export default async function handler(
 
   try {
     const [tracks, embeddings, meta] = await Promise.all([
-      loadTracks(),
-      loadEmbeddings(),
-      loadEmbeddingsMeta(),
+      loadVisualizationTracks(),
+      loadVisualizationEmbeddings(),
+      loadVisualizationEmbeddingsMeta(),
     ]);
 
     // Find track index

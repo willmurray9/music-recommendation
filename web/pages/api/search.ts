@@ -1,5 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { loadTracks, loadSearchIndex, Track } from '@/lib/embeddings';
+import {
+  loadTracks,
+  loadSearchIndex,
+  loadVisualizationIndexMap,
+  Track,
+} from '@/lib/embeddings';
 
 interface SearchResult {
   track: Track;
@@ -36,9 +41,10 @@ export default async function handler(
   const maxResults = Math.min(parseInt(limit as string, 10) || 20, 100);
 
   try {
-    const [tracks, searchIndex] = await Promise.all([
+    const [tracks, searchIndex, visualizationIndexMap] = await Promise.all([
       loadTracks(),
       loadSearchIndex(),
+      loadVisualizationIndexMap(),
     ]);
 
     // Tokenize query
@@ -75,7 +81,7 @@ export default async function handler(
 
     const results: SearchResult[] = sortedMatches.map(({ index, track }) => ({
       track,
-      index,
+      index: visualizationIndexMap.get(track.id) ?? -1,
     }));
 
     res.status(200).json({ results, query: q });
