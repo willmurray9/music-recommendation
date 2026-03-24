@@ -47,7 +47,9 @@ class CandidateRow:
 
 
 def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
-    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet")
+    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet").drop_duplicates(
+        subset="track_uri", keep="first"
+    )
     tags_df = pd.read_parquet(layout.normalized_dir / "track_tags.parquet")
     best_retrieval = read_json(layout.manifests_dir / "train_retrieval.json")
     wv = KeyedVectors.load(str(layout.root / best_retrieval["model_path"]))

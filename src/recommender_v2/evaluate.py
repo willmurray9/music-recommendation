@@ -12,7 +12,9 @@ from .utils import read_json, read_jsonl, write_json
 
 
 def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
-    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet")
+    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet").drop_duplicates(
+        subset="track_uri", keep="first"
+    )
     tags_df_path = layout.normalized_dir / "track_tags.parquet"
     tags_df = pd.read_parquet(tags_df_path) if tags_df_path.exists() else pd.DataFrame()
     metadata = _build_metadata(track_df, tags_df)

@@ -41,7 +41,9 @@ class RetrievalExperiment:
 
 def train_retrieval(config: PipelineConfig, layout: RunLayout) -> dict:
     playlist_tracks_df = pd.read_parquet(layout.normalized_dir / "playlist_tracks.parquet")
-    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet")
+    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet").drop_duplicates(
+        subset="track_uri", keep="first"
+    )
     split_rows = read_jsonl(layout.splits_dir / "val.jsonl")
 
     sequences = _load_train_sequences(layout)

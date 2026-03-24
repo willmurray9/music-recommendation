@@ -51,6 +51,7 @@ def build_corpus(config: PipelineConfig, layout: RunLayout) -> dict:
     artist_info_path = config.project_root / "data" / "processed" / "artist_info.parquet"
     if artist_info_path.exists():
         artist_info_df = pd.read_parquet(artist_info_path)
+        artist_info_df = artist_info_df.drop_duplicates(subset="artist_id", keep="first").copy()
         artist_info_df["artist_uri"] = "spotify:artist:" + artist_info_df["artist_id"].astype(str)
         artist_info_df["genres"] = artist_info_df["genres"].apply(
             lambda value: value.tolist() if hasattr(value, "tolist") else (value or [])
@@ -61,9 +62,13 @@ def build_corpus(config: PipelineConfig, layout: RunLayout) -> dict:
             how="left",
             suffixes=("", "_artist_info"),
         )
-        artists_df["artist_name"] = artists_df["artist_name"].fillna(artists_df["artist_name_artist_info"])
-        artists_df["artist_popularity"] = artists_df["artist_popularity"].fillna(artists_df["artist_popularity_artist_info"])
-        artists_df["artist_followers"] = artists_df["artist_followers"].fillna(artists_df["artist_followers_artist_info"])
+        artists_df["artist_name"] = artists_df["artist_name"].combine_first(artists_df["artist_name_artist_info"])
+        artists_df["artist_popularity"] = artists_df["artist_popularity"].combine_first(
+            artists_df["artist_popularity_artist_info"]
+        )
+        artists_df["artist_followers"] = artists_df["artist_followers"].combine_first(
+            artists_df["artist_followers_artist_info"]
+        )
         artists_df["genres"] = artists_df["genres"].combine_first(artists_df["genres_artist_info"])
         artists_df = artists_df.drop(
             columns=[
@@ -74,6 +79,8 @@ def build_corpus(config: PipelineConfig, layout: RunLayout) -> dict:
             ],
             errors="ignore",
         )
+
+    artists_df = artists_df.drop_duplicates(subset="artist_uri", keep="first").copy()
 
     artists_df["artist_id"] = artists_df["artist_uri"].map(extract_spotify_id)
     artists_df["genres"] = artists_df["genres"].apply(_normalize_genres)
@@ -93,6 +100,7 @@ def build_corpus(config: PipelineConfig, layout: RunLayout) -> dict:
         on="artist_uri",
         how="left",
     )
+    tracks_df = tracks_df.drop_duplicates(subset="track_uri", keep="first").copy()
     tracks_df["genres"] = tracks_df["genres"].apply(_normalize_genres)
     tracks_df["tag_count"] = tracks_df["genres"].apply(len)
 

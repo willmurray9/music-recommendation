@@ -13,7 +13,9 @@ from .paths import RunLayout
 
 
 def export_web(config: PipelineConfig, layout: RunLayout) -> dict:
-    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet").copy()
+    track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet").drop_duplicates(
+        subset="track_uri", keep="first"
+    ).copy()
     track_df["genres"] = track_df["genres"].apply(_normalize_list)
     track_df["tags"] = track_df.get("tags", pd.Series(index=track_df.index)).apply(_normalize_list)
 
