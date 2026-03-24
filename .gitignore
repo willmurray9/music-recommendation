@@ -1,13 +1,8 @@
 # Data files - don't commit large datasets
 data/raw/
 data/processed/
-*.csv
-*.json
-*.parquet
+data/runs/
 !data/.gitkeep
-
-# But allow web app data files for Vercel deployment
-!web/public/data/*.json
 
 # Python
 __pycache__/
@@ -38,6 +33,13 @@ env/
 .env
 .venv/
 
+# Python tooling
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+
 # Jupyter Notebooks
 .ipynb_checkpoints/
 *.ipynb_checkpoints
@@ -56,7 +58,8 @@ Thumbs.db
 # Project specific
 *.pkl
 *.pickle
+models/*.parquet
 models/*.pt
 models/*.pth
 *.log
-
+web/data/server/

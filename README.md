@@ -11,6 +11,8 @@ This project explores music recommendation using the Spotify Million Playlist Da
 - **3D Visualization**: Interactive t-SNE visualization of 62K+ track embeddings
 - **Web App**: Next.js application for exploring recommendations
 
+The repo is in the middle of a transition from a notebook-first data science layout to a more standard code-and-tests workflow. The notebooks are still useful for exploration, but the scripted pipeline under `src/recommender_v2/` is the repeatable path for development.
+
 ## Demo
 
 The web app allows you to:
@@ -44,19 +46,36 @@ The web app allows you to:
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.11+
 - Node.js 18+ (for web app)
 
 ### Python Environment
 
 ```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Create the local virtual environment with Python 3.11
+python3.11 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install the project in editable mode
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
+
+If you prefer `make`, the same workflow is available via:
+
+```bash
+make venv
+make install-dev
+make test
+```
+
+If `python3.11` is not on your `PATH`, pass an explicit interpreter to the bootstrap target:
+
+```bash
+make venv PYTHON_BOOTSTRAP=/path/to/python3.11
+```
+
+`requirements.txt` is still available for the original notebook-oriented setup, but editable installs are the preferred path for ongoing development.
 
 ### Data
 
@@ -72,14 +91,20 @@ The repo now includes a scriptable training and evaluation pipeline under `src/r
 Commands:
 
 ```bash
-python -m src.recommender_v2 collect_spotify --run-id my-run
-python -m src.recommender_v2 build_corpus --run-id my-run
-python -m src.recommender_v2 enrich_metadata --run-id my-run
-python -m src.recommender_v2 split_eval --run-id my-run
-python -m src.recommender_v2 train_retrieval --run-id my-run
-python -m src.recommender_v2 train_reranker --run-id my-run
-python -m src.recommender_v2 evaluate --run-id my-run
-python -m src.recommender_v2 export_web --run-id my-run
+recommender-v2 collect_spotify --run-id my-run
+recommender-v2 build_corpus --run-id my-run
+recommender-v2 enrich_metadata --run-id my-run
+recommender-v2 split_eval --run-id my-run
+recommender-v2 train_retrieval --run-id my-run
+recommender-v2 train_reranker --run-id my-run
+recommender-v2 evaluate --run-id my-run
+recommender-v2 export_web --run-id my-run
+```
+
+The module entry point still works too:
+
+```bash
+python -m src.recommender_v2 --help
 ```
 
 Configuration lives in `config/recommender_v2.toml`.
@@ -124,12 +149,25 @@ For the V2 pipeline, `export_web` writes:
 ### Run Locally
 
 ```bash
-cd web
-npm install
-npm run dev
+npm --prefix web install
+npm --prefix web run dev
 ```
 
 Open http://localhost:3000
+
+## Tests
+
+The current automated coverage is a small smoke suite around the V2 pipeline:
+
+```bash
+make test
+```
+
+or directly:
+
+```bash
+python -m unittest discover -s tests -q
+```
 
 ### Deploy to Vercel
 
