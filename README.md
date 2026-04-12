@@ -191,6 +191,12 @@ For an already-prepared run, train/evaluate only:
 make train-model CONFIG=config/recommender_v2.toml RUN_ID=local-v3
 ```
 
+To print and save a readable comparison report for an evaluated run:
+
+```bash
+make report-model CONFIG=config/recommender_v2.toml RUN_ID=local-v3
+```
+
 For a fresh full run with a specific config/run id, override them:
 
 ```bash
@@ -198,6 +204,7 @@ make verify-model CONFIG=config/recommender_v2.toml RUN_ID=local-v3
 ```
 
 Long-running retrieval, reranker, and evaluation commands now print stage-by-stage progress and also write status manifests under `data/runs/<run-id>/manifests/`.
+`report` writes a compact summary to `data/runs/<run-id>/metrics/report.json` and `report.txt`.
 
 ### Deploy to Vercel
 

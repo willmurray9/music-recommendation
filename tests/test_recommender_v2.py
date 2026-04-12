@@ -23,6 +23,7 @@ from src.recommender_v2.evaluate import evaluate_pipeline
 from src.recommender_v2.export_web import export_web
 from src.recommender_v2.metrics import ndcg_at_k, recall_at_k
 from src.recommender_v2.paths import RunLayout
+from src.recommender_v2.reporting import build_run_report
 from src.recommender_v2.retrieval import train_retrieval
 from src.recommender_v2.reranker import train_reranker
 from src.recommender_v2.splits import build_eval_splits
@@ -64,13 +65,18 @@ class RecommenderV2Tests(unittest.TestCase):
 
             reranker_summary = train_reranker(config, run)
             self.assertIn("promoted", reranker_summary)
+            self.assertIn("reranker_test_metrics", reranker_summary)
             reranker_progress = json.loads((run.manifests_dir / "train_reranker_progress.json").read_text())
             self.assertEqual(reranker_progress["status"], "completed")
 
             evaluation_summary = evaluate_pipeline(config, run)
             self.assertIn("results", evaluation_summary)
+            self.assertIn("retrieval_test", evaluation_summary["results"])
             evaluation_progress = json.loads((run.manifests_dir / "evaluate_progress.json").read_text())
             self.assertEqual(evaluation_progress["status"], "completed")
+            report_summary = build_run_report(run)
+            self.assertIn("winners", report_summary)
+            self.assertTrue((run.metrics_dir / "report.txt").exists())
 
             export_summary = export_web(config, run)
             self.assertGreater(export_summary["server_tracks"], 0)

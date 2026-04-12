@@ -9,6 +9,7 @@ from .dataset import build_corpus, enrich_metadata
 from .evaluate import evaluate_pipeline
 from .export_web import export_web
 from .paths import RunLayout
+from .reporting import build_run_report
 from .reranker import train_reranker
 from .retrieval import train_retrieval
 from .splits import build_eval_splits
@@ -31,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("train_retrieval")
     subparsers.add_parser("train_reranker")
     subparsers.add_parser("evaluate")
+    subparsers.add_parser("report")
     subparsers.add_parser("export_web")
     return parser
 
@@ -62,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         result = train_reranker(config, layout)
     elif args.command == "evaluate":
         result = evaluate_pipeline(config, layout)
+    elif args.command == "report":
+        result = build_run_report(layout)
     elif args.command == "export_web":
         result = export_web(config, layout)
         layout.update_current_symlink(config.run.current_symlink)

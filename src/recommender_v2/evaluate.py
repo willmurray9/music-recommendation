@@ -57,6 +57,14 @@ def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
             config.retrieval.candidate_pool_size,
             progress_label="legacy_track2vec_val",
         )
+        results["legacy_track2vec_test"] = evaluate_retrieval_model(
+            legacy,
+            test_rows,
+            metadata,
+            popularity_values,
+            config.retrieval.candidate_pool_size,
+            progress_label="legacy_track2vec_test",
+        )
 
     log_event("evaluate", "evaluating retrieval winner", model="retrieval_best.wordvectors")
     best_retrieval = KeyedVectors.load(str(layout.models_dir / "retrieval_best.wordvectors"))
@@ -109,9 +117,16 @@ def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
 
 def _promotion_summary(results: dict[str, dict]) -> dict:
     retrieval_val = results.get("retrieval_val", {})
+    retrieval_test = results.get("retrieval_test", {})
     reranker = results.get("reranker", {})
     return {
         "retrieval_recall@50": retrieval_val.get("recall@50"),
+        "retrieval_recall@50_val": retrieval_val.get("recall@50"),
+        "retrieval_recall@50_test": retrieval_test.get("recall@50"),
         "reranker_promoted": reranker.get("promoted", False),
         "reranker_ndcg@10": reranker.get("reranker_val_metrics", {}).get("ndcg@10"),
+        "reranker_ndcg@10_val": reranker.get("reranker_val_metrics", {}).get("ndcg@10"),
+        "reranker_ndcg@10_test": reranker.get("reranker_test_metrics", {}).get("ndcg@10"),
+        "reranker_test_promoted": reranker.get("test_promoted", False),
+        "reranker_val_promoted": reranker.get("val_promoted", False),
     }

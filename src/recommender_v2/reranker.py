@@ -22,7 +22,7 @@ from .metrics import (
     intra_list_diversity,
 )
 from .paths import RunLayout
-from .retrieval import retrieve_candidates
+from .retrieval import evaluate_retrieval_model, retrieve_candidates
 from .utils import (
     cosine_similarity,
     format_duration,
@@ -69,6 +69,7 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
 
     train_rows = read_jsonl(layout.splits_dir / "train.jsonl")
     val_rows = read_jsonl(layout.splits_dir / "val.jsonl")
+    test_rows = read_jsonl(layout.splits_dir / "test.jsonl")
     popularity_values = np.sort(track_df["playlist_support"].fillna(0).astype(float).to_numpy())
     write_json(
         progress_path,
@@ -76,6 +77,7 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
             "status": "building_train_examples",
             "train_rows": len(train_rows),
             "val_rows": len(val_rows),
+            "test_rows": len(test_rows),
             "best_retrieval_experiment": best_retrieval["experiment"],
         },
     )
@@ -84,6 +86,7 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         "building reranker training examples",
         train_rows=len(train_rows),
         val_rows=len(val_rows),
+        test_rows=len(test_rows),
         candidate_pool=config.retrieval.candidate_pool_size,
         seed_neighbor_probe=config.reranker.max_seed_neighbor_probe,
     )
@@ -152,8 +155,16 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         duration=format_duration(time.perf_counter() - fit_started),
     )
 
-    retrieval_metrics = best_retrieval["metrics"]
-    rerank_metrics = evaluate_reranker(
+    retrieval_val_metrics = best_retrieval["metrics"]
+    retrieval_test_metrics = evaluate_retrieval_model(
+        wv,
+        test_rows,
+        metadata,
+        popularity_values,
+        config.retrieval.candidate_pool_size,
+        progress_label="retrieval_test_baseline",
+    )
+    rerank_val_metrics = evaluate_reranker(
         model,
         wv,
         val_rows,
@@ -163,12 +174,34 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         config.reranker.max_seed_neighbor_probe,
         progress_label="val",
     )
-    improvement = (
-        (rerank_metrics["ndcg@10"] - retrieval_metrics["ndcg@10"]) / max(retrieval_metrics["ndcg@10"], 1e-9)
+    rerank_test_metrics = evaluate_reranker(
+        model,
+        wv,
+        test_rows,
+        metadata,
+        popularity_values,
+        config.retrieval.candidate_pool_size,
+        config.reranker.max_seed_neighbor_probe,
+        progress_label="test",
     )
-    coverage_ok = rerank_metrics["catalog_coverage@50"] >= retrieval_metrics["catalog_coverage@50"] * 0.95
-    diversity_ok = rerank_metrics["intra_list_diversity"] >= retrieval_metrics["intra_list_diversity"] * 0.95
-    promoted = improvement >= 0.10 and coverage_ok and diversity_ok
+    val_improvement = (
+        (rerank_val_metrics["ndcg@10"] - retrieval_val_metrics["ndcg@10"]) / max(retrieval_val_metrics["ndcg@10"], 1e-9)
+    )
+    test_improvement = (
+        (rerank_test_metrics["ndcg@10"] - retrieval_test_metrics["ndcg@10"])
+        / max(retrieval_test_metrics["ndcg@10"], 1e-9)
+    )
+    val_coverage_ok = rerank_val_metrics["catalog_coverage@50"] >= retrieval_val_metrics["catalog_coverage@50"] * 0.95
+    test_coverage_ok = rerank_test_metrics["catalog_coverage@50"] >= retrieval_test_metrics["catalog_coverage@50"] * 0.95
+    val_diversity_ok = (
+        rerank_val_metrics["intra_list_diversity"] >= retrieval_val_metrics["intra_list_diversity"] * 0.95
+    )
+    test_diversity_ok = (
+        rerank_test_metrics["intra_list_diversity"] >= retrieval_test_metrics["intra_list_diversity"] * 0.95
+    )
+    val_promoted = val_improvement >= 0.10 and val_coverage_ok and val_diversity_ok
+    test_promoted = test_improvement >= 0.10 and test_coverage_ok and test_diversity_ok
+    promoted = val_promoted and test_promoted
 
     export_payload = export_hist_gradient_boosting(model)
     write_json(layout.models_dir / "reranker_model.json", export_payload)
@@ -177,11 +210,21 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         "feature_names": FEATURE_NAMES,
         "training_rows": int(len(train_examples)),
         "promoted": promoted,
-        "retrieval_val_metrics": retrieval_metrics,
-        "reranker_val_metrics": rerank_metrics,
-        "ndcg10_improvement_ratio": improvement,
-        "coverage_ok": coverage_ok,
-        "diversity_ok": diversity_ok,
+        "val_promoted": val_promoted,
+        "test_promoted": test_promoted,
+        "retrieval_val_metrics": retrieval_val_metrics,
+        "retrieval_test_metrics": retrieval_test_metrics,
+        "reranker_val_metrics": rerank_val_metrics,
+        "reranker_test_metrics": rerank_test_metrics,
+        "ndcg10_improvement_ratio": val_improvement,
+        "ndcg10_improvement_ratio_val": val_improvement,
+        "ndcg10_improvement_ratio_test": test_improvement,
+        "coverage_ok": val_coverage_ok and test_coverage_ok,
+        "coverage_ok_val": val_coverage_ok,
+        "coverage_ok_test": test_coverage_ok,
+        "diversity_ok": val_diversity_ok and test_diversity_ok,
+        "diversity_ok_val": val_diversity_ok,
+        "diversity_ok_test": test_diversity_ok,
         "model_path": str((layout.models_dir / "reranker_model.json").relative_to(layout.root)),
     }
     write_json(layout.manifests_dir / "train_reranker.json", summary)
@@ -192,9 +235,14 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
             "training_rows": int(len(train_examples)),
             "positive_rows": positive_rows,
             "promoted": promoted,
-            "ndcg10_improvement_ratio": improvement,
-            "coverage_ok": coverage_ok,
-            "diversity_ok": diversity_ok,
+            "val_promoted": val_promoted,
+            "test_promoted": test_promoted,
+            "ndcg10_improvement_ratio_val": val_improvement,
+            "ndcg10_improvement_ratio_test": test_improvement,
+            "coverage_ok_val": val_coverage_ok,
+            "coverage_ok_test": test_coverage_ok,
+            "diversity_ok_val": val_diversity_ok,
+            "diversity_ok_test": test_diversity_ok,
             "elapsed_seconds": time.perf_counter() - total_started,
         },
     )
@@ -202,9 +250,12 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         "train_reranker",
         "completed reranker training",
         promoted=promoted,
-        ndcg10_delta=f"{improvement:.4f}",
-        coverage_ok=coverage_ok,
-        diversity_ok=diversity_ok,
+        val_promoted=val_promoted,
+        test_promoted=test_promoted,
+        ndcg10_delta_val=f"{val_improvement:.4f}",
+        ndcg10_delta_test=f"{test_improvement:.4f}",
+        coverage_ok=val_coverage_ok and test_coverage_ok,
+        diversity_ok=val_diversity_ok and test_diversity_ok,
         elapsed=format_duration(time.perf_counter() - total_started),
     )
     return summary
