@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 import math
+import time
 
 import numpy as np
 import pandas as pd
@@ -22,7 +23,15 @@ from .metrics import (
 )
 from .paths import RunLayout
 from .retrieval import retrieve_candidates
-from .utils import cosine_similarity, percentile_rank, read_json, read_jsonl, write_json
+from .utils import (
+    cosine_similarity,
+    format_duration,
+    log_event,
+    percentile_rank,
+    read_json,
+    read_jsonl,
+    write_json,
+)
 
 
 FEATURE_NAMES = [
@@ -47,6 +56,9 @@ class CandidateRow:
 
 
 def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
+    total_started = time.perf_counter()
+    progress_path = layout.manifests_dir / "train_reranker_progress.json"
+
     track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet").drop_duplicates(
         subset="track_uri", keep="first"
     )
@@ -58,7 +70,25 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
     train_rows = read_jsonl(layout.splits_dir / "train.jsonl")
     val_rows = read_jsonl(layout.splits_dir / "val.jsonl")
     popularity_values = np.sort(track_df["playlist_support"].fillna(0).astype(float).to_numpy())
+    write_json(
+        progress_path,
+        {
+            "status": "building_train_examples",
+            "train_rows": len(train_rows),
+            "val_rows": len(val_rows),
+            "best_retrieval_experiment": best_retrieval["experiment"],
+        },
+    )
+    log_event(
+        "train_reranker",
+        "building reranker training examples",
+        train_rows=len(train_rows),
+        val_rows=len(val_rows),
+        candidate_pool=config.retrieval.candidate_pool_size,
+        seed_neighbor_probe=config.reranker.max_seed_neighbor_probe,
+    )
 
+    example_started = time.perf_counter()
     train_examples = _build_candidate_rows(
         wv,
         train_rows,
@@ -66,11 +96,31 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         popularity_values,
         config.retrieval.candidate_pool_size,
         config.reranker.max_seed_neighbor_probe,
+        progress_label="train",
     )
     X_train = np.array([row.features for row in train_examples], dtype=np.float32)
     y_train = np.array([row.label for row in train_examples], dtype=np.int8)
     if len(np.unique(y_train)) < 2:
         raise RuntimeError("Reranker training data is degenerate; no positive/negative separation")
+    positive_rows = int(y_train.sum())
+    write_json(
+        progress_path,
+        {
+            "status": "fitting_model",
+            "training_rows": int(len(train_examples)),
+            "positive_rows": positive_rows,
+            "negative_rows": int(len(train_examples) - positive_rows),
+            "example_build_seconds": time.perf_counter() - example_started,
+        },
+    )
+    log_event(
+        "train_reranker",
+        "built reranker training examples",
+        examples=len(train_examples),
+        positive_rows=positive_rows,
+        negative_rows=int(len(train_examples) - positive_rows),
+        duration=format_duration(time.perf_counter() - example_started),
+    )
 
     model = HistGradientBoostingClassifier(
         max_iter=config.reranker.max_iter,
@@ -79,7 +129,28 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         l2_regularization=config.reranker.l2_regularization,
         random_state=config.reranker.random_seed,
     )
+    fit_started = time.perf_counter()
+    log_event(
+        "train_reranker",
+        "fitting reranker model",
+        max_iter=config.reranker.max_iter,
+        max_depth=config.reranker.max_depth,
+    )
     model.fit(X_train, y_train)
+    write_json(
+        progress_path,
+        {
+            "status": "evaluating_validation",
+            "training_rows": int(len(train_examples)),
+            "positive_rows": positive_rows,
+            "fit_seconds": time.perf_counter() - fit_started,
+        },
+    )
+    log_event(
+        "train_reranker",
+        "fitted reranker model",
+        duration=format_duration(time.perf_counter() - fit_started),
+    )
 
     retrieval_metrics = best_retrieval["metrics"]
     rerank_metrics = evaluate_reranker(
@@ -90,6 +161,7 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         popularity_values,
         config.retrieval.candidate_pool_size,
         config.reranker.max_seed_neighbor_probe,
+        progress_label="val",
     )
     improvement = (
         (rerank_metrics["ndcg@10"] - retrieval_metrics["ndcg@10"]) / max(retrieval_metrics["ndcg@10"], 1e-9)
@@ -113,6 +185,28 @@ def train_reranker(config: PipelineConfig, layout: RunLayout) -> dict:
         "model_path": str((layout.models_dir / "reranker_model.json").relative_to(layout.root)),
     }
     write_json(layout.manifests_dir / "train_reranker.json", summary)
+    write_json(
+        progress_path,
+        {
+            "status": "completed",
+            "training_rows": int(len(train_examples)),
+            "positive_rows": positive_rows,
+            "promoted": promoted,
+            "ndcg10_improvement_ratio": improvement,
+            "coverage_ok": coverage_ok,
+            "diversity_ok": diversity_ok,
+            "elapsed_seconds": time.perf_counter() - total_started,
+        },
+    )
+    log_event(
+        "train_reranker",
+        "completed reranker training",
+        promoted=promoted,
+        ndcg10_delta=f"{improvement:.4f}",
+        coverage_ok=coverage_ok,
+        diversity_ok=diversity_ok,
+        elapsed=format_duration(time.perf_counter() - total_started),
+    )
     return summary
 
 
@@ -124,6 +218,7 @@ def evaluate_reranker(
     popularity_values: np.ndarray,
     candidate_pool_size: int,
     seed_neighbor_probe: int,
+    progress_label: str | None = None,
 ) -> dict[str, float]:
     recommendation_lists: list[list[str]] = []
     artist_lookup = {uri: row.get("artist_uri") for uri, row in metadata.items()}
@@ -132,8 +227,18 @@ def evaluate_reranker(
     }
     vector_lookup = {uri: wv[uri] for uri in wv.key_to_index.keys()}
     metrics = defaultdict(list)
+    total_rows = len(split_rows)
+    progress_step = max(1, total_rows // 5) if total_rows else 1
+    if progress_label:
+        log_event(
+            "reranker_eval",
+            "starting reranker evaluation",
+            split=progress_label,
+            rows=total_rows,
+            candidate_pool=candidate_pool_size,
+        )
 
-    for row in split_rows:
+    for idx, row in enumerate(split_rows, start=1):
         reranked = rerank_candidates(
             model,
             wv,
@@ -152,12 +257,27 @@ def evaluate_reranker(
         metrics["ndcg@50"].append(ndcg_at_k(reranked, positives, 50))
         metrics["mrr@10"].append(mrr_at_k(reranked, positives, 10))
         metrics["same_artist_rate"].append(same_artist_rate(reranked, artist_lookup))
+        if progress_label and (idx % progress_step == 0 or idx == total_rows):
+            log_event(
+                "reranker_eval",
+                "evaluation progress",
+                split=progress_label,
+                completed=f"{idx}/{total_rows}",
+            )
 
     summary = {name: float(np.mean(values)) if values else 0.0 for name, values in metrics.items()}
     summary["catalog_coverage@50"] = catalog_coverage(recommendation_lists, len(metadata))
     summary["unique_artist_coverage@50"] = unique_artist_coverage(recommendation_lists, artist_lookup)
     summary["mean_popularity_percentile"] = mean_popularity_percentile(recommendation_lists, popularity_lookup)
     summary["intra_list_diversity"] = intra_list_diversity(recommendation_lists, vector_lookup)
+    if progress_label:
+        log_event(
+            "reranker_eval",
+            "completed reranker evaluation",
+            split=progress_label,
+            recall50=f"{summary['recall@50']:.4f}",
+            ndcg10=f"{summary['ndcg@10']:.4f}",
+        )
     return summary
 
 
@@ -196,9 +316,21 @@ def _build_candidate_rows(
     popularity_values: np.ndarray,
     candidate_pool_size: int,
     seed_neighbor_probe: int,
+    progress_label: str | None = None,
 ) -> list[CandidateRow]:
     examples: list[CandidateRow] = []
-    for row in split_rows:
+    total_rows = len(split_rows)
+    progress_step = max(1, total_rows // 10) if total_rows else 1
+    if progress_label:
+        log_event(
+            "reranker_data",
+            "starting candidate generation",
+            split=progress_label,
+            rows=total_rows,
+            candidate_pool=candidate_pool_size,
+        )
+
+    for idx, row in enumerate(split_rows, start=1):
         candidates = retrieve_candidates(wv, row["seed_tracks"], topn=candidate_pool_size)
         candidate_rows = _candidate_features(
             wv,
@@ -210,6 +342,14 @@ def _build_candidate_rows(
             positives=set(row["positive_tracks"]),
         )
         examples.extend(candidate_rows)
+        if progress_label and (idx % progress_step == 0 or idx == total_rows):
+            log_event(
+                "reranker_data",
+                "candidate generation progress",
+                split=progress_label,
+                completed=f"{idx}/{total_rows}",
+                accumulated_examples=len(examples),
+            )
     return examples
 
 
@@ -233,7 +373,9 @@ def _candidate_features(
         seed_neighbor_sets.append({uri for uri, _ in neighbors})
 
     seed_years = [metadata[seed].get("release_year") for seed in valid_seeds if metadata.get(seed, {}).get("release_year")]
-    seed_duration = np.mean([metadata[seed].get("duration_ms", 0) for seed in valid_seeds if metadata.get(seed, {}).get("duration_ms")])
+    seed_duration = np.mean(
+        [metadata[seed].get("duration_ms", 0) for seed in valid_seeds if metadata.get(seed, {}).get("duration_ms")]
+    )
     seed_genres = set().union(*(metadata.get(seed, {}).get("genres", []) for seed in valid_seeds))
     seed_tags = set().union(*(metadata.get(seed, {}).get("tags", []) for seed in valid_seeds))
     seed_artists = {metadata.get(seed, {}).get("artist_uri") for seed in valid_seeds}

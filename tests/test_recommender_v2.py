@@ -57,12 +57,20 @@ class RecommenderV2Tests(unittest.TestCase):
 
             retrieval_summary = train_retrieval(config, run)
             self.assertIn("recall@50", retrieval_summary["metrics"])
+            retrieval_summary_repeat = train_retrieval(config, run)
+            self.assertEqual(retrieval_summary["experiment"], retrieval_summary_repeat["experiment"])
+            retrieval_progress = json.loads((run.manifests_dir / "train_retrieval_progress.json").read_text())
+            self.assertEqual(retrieval_progress["status"], "completed")
 
             reranker_summary = train_reranker(config, run)
             self.assertIn("promoted", reranker_summary)
+            reranker_progress = json.loads((run.manifests_dir / "train_reranker_progress.json").read_text())
+            self.assertEqual(reranker_progress["status"], "completed")
 
             evaluation_summary = evaluate_pipeline(config, run)
             self.assertIn("results", evaluation_summary)
+            evaluation_progress = json.loads((run.manifests_dir / "evaluate_progress.json").read_text())
+            self.assertEqual(evaluation_progress["status"], "completed")
 
             export_summary = export_web(config, run)
             self.assertGreater(export_summary["server_tracks"], 0)

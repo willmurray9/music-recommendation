@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 from gensim.models import KeyedVectors
 
 from .config import PipelineConfig
 from .paths import RunLayout
-from .retrieval import evaluate_retrieval_model, retrieve_candidates
-from .reranker import evaluate_reranker, rerank_candidates, _build_metadata
-from .utils import read_json, read_jsonl, write_json
+from .retrieval import evaluate_retrieval_model
+from .reranker import _build_metadata
+from .utils import format_duration, log_event, read_json, read_jsonl, write_json
 
 
 def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
+    started = time.perf_counter()
+    progress_path = layout.manifests_dir / "evaluate_progress.json"
+
     track_df = pd.read_parquet(layout.normalized_dir / "tracks.parquet").drop_duplicates(
         subset="track_uri", keep="first"
     )
@@ -23,9 +28,26 @@ def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
     test_rows = read_jsonl(layout.splits_dir / "test.jsonl")
 
     results: dict[str, dict] = {}
+    write_json(
+        progress_path,
+        {
+            "status": "running",
+            "run_id": layout.root.name,
+            "validation_rows": len(val_rows),
+            "test_rows": len(test_rows),
+        },
+    )
+    log_event(
+        "evaluate",
+        "starting evaluation",
+        run_id=layout.root.name,
+        validation_rows=len(val_rows),
+        test_rows=len(test_rows),
+    )
 
     legacy_model_path = config.project_root / "models" / "track2vec.wordvectors"
     if legacy_model_path.exists():
+        log_event("evaluate", "evaluating legacy baseline", model="models/track2vec.wordvectors")
         legacy = KeyedVectors.load(str(legacy_model_path))
         results["legacy_track2vec_val"] = evaluate_retrieval_model(
             legacy,
@@ -33,8 +55,10 @@ def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
             metadata,
             popularity_values,
             config.retrieval.candidate_pool_size,
+            progress_label="legacy_track2vec_val",
         )
 
+    log_event("evaluate", "evaluating retrieval winner", model="retrieval_best.wordvectors")
     best_retrieval = KeyedVectors.load(str(layout.models_dir / "retrieval_best.wordvectors"))
     results["retrieval_val"] = evaluate_retrieval_model(
         best_retrieval,
@@ -42,6 +66,7 @@ def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
         metadata,
         popularity_values,
         config.retrieval.candidate_pool_size,
+        progress_label="retrieval_val",
     )
     results["retrieval_test"] = evaluate_retrieval_model(
         best_retrieval,
@@ -49,6 +74,7 @@ def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
         metadata,
         popularity_values,
         config.retrieval.candidate_pool_size,
+        progress_label="retrieval_test",
     )
 
     reranker_manifest_path = layout.manifests_dir / "train_reranker.json"
@@ -62,6 +88,22 @@ def evaluate_pipeline(config: PipelineConfig, layout: RunLayout) -> dict:
     }
     write_json(layout.metrics_dir / "evaluation.json", summary)
     write_json(layout.manifests_dir / "evaluate.json", summary)
+    write_json(
+        progress_path,
+        {
+            "status": "completed",
+            "run_id": layout.root.name,
+            "elapsed_seconds": time.perf_counter() - started,
+            "promotion": summary["promotion"],
+        },
+    )
+    log_event(
+        "evaluate",
+        "completed evaluation",
+        retrieval_recall50=summary["promotion"].get("retrieval_recall@50"),
+        reranker_promoted=summary["promotion"].get("reranker_promoted"),
+        elapsed=format_duration(time.perf_counter() - started),
+    )
     return summary
 
 

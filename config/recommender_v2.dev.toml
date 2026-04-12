@@ -1,0 +1,60 @@
+[run]
+run_root = "data/runs"
+current_symlink = "data/runs/current"
+default_run_prefix = "recommender-v2-dev"
+
+[collect]
+market = "US"
+max_playlists = 10000
+playlists_per_query = 10
+tracks_per_playlist = 100
+top_artists = 500
+top_genres = 100
+year_buckets = [2000, 2010, 2020]
+query_keywords = ["focus", "chill", "workout"]
+retry_count = 3
+retry_backoff_seconds = 1.0
+local_mpd_path = ""
+
+[corpus]
+min_playlist_tracks = 5
+max_playlist_tracks = 200
+drop_duplicate_tracks = true
+
+[split]
+eligible_min_tracks = 10
+eligible_max_tracks = 100
+train_fraction = 0.8
+val_fraction = 0.1
+random_seed = 42
+min_seed_tracks = 3
+max_seed_tracks = 5
+min_positive_tracks = 2
+max_positive_tracks = 5
+
+[retrieval]
+vector_sizes = [128]
+windows = [10]
+min_counts = [3]
+negatives = [10]
+epochs = 3
+sg = 1
+seed = 42
+workers = 1
+candidate_pool_size = 200
+
+[reranker]
+max_iter = 50
+max_depth = 5
+learning_rate = 0.1
+l2_regularization = 0.0
+random_seed = 42
+max_seed_neighbor_probe = 50
+
+[export]
+server_dir = "web/data/server/current"
+public_dir = "web/public/data"
+public_viz_tracks = 5000
+tsne_perplexity = 20
+tsne_iter = 500
+tsne_random_state = 42

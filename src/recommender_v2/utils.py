@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 import json
 import math
@@ -100,3 +101,21 @@ def dataframe_to_records(df: pd.DataFrame) -> list[dict]:
                 normalized[key] = value
         fixed.append(normalized)
     return fixed
+
+
+def format_duration(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def log_event(stage: str, message: str, **fields: object) -> None:
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    detail = " ".join(f"{key}={value}" for key, value in fields.items() if value is not None)
+    suffix = f" | {detail}" if detail else ""
+    print(f"[{timestamp}] {stage}: {message}{suffix}", flush=True)

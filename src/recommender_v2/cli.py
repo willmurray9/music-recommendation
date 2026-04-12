@@ -12,7 +12,7 @@ from .paths import RunLayout
 from .reranker import train_reranker
 from .retrieval import train_retrieval
 from .splits import build_eval_splits
-from .utils import write_json
+from .utils import log_event, write_json
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +40,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     config = load_config(args.config)
     layout = RunLayout.create(config, run_id=args.run_id)
+    log_event(
+        "pipeline",
+        "starting command",
+        command=args.command,
+        run_id=layout.root.name,
+        config=args.config or "config/recommender_v2.toml",
+    )
 
     if args.command == "collect_spotify":
         result = collect_spotify(config, layout, live=args.live)
@@ -63,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     write_json(layout.manifests_dir / "last_command.json", {"command": args.command, "result": result})
+    log_event("pipeline", "completed command", command=args.command, run_id=layout.root.name)
     return 0
 
 

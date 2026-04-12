@@ -169,6 +169,20 @@ or directly:
 python -m unittest discover -s tests -q
 ```
 
+For a quick end-to-end model verification run, use the smaller dev config:
+
+```bash
+make verify-model
+```
+
+This defaults to `config/recommender_v2.dev.toml` and `RUN_ID=dev-verify`. For a full run or a specific existing run, override them:
+
+```bash
+make verify-model CONFIG=config/recommender_v2.toml RUN_ID=local-v3
+```
+
+Long-running retrieval, reranker, and evaluation commands now print stage-by-stage progress and also write status manifests under `data/runs/<run-id>/manifests/`.
+
 ### Deploy to Vercel
 
 The web app is configured for Vercel deployment. Push to GitHub and import to Vercel.
