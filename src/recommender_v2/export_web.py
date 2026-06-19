@@ -9,6 +9,7 @@ from gensim.models import KeyedVectors
 from sklearn.manifold import TSNE
 
 from .config import PipelineConfig
+from .model_lab import build_model_lab_snapshot
 from .paths import RunLayout
 
 
@@ -44,10 +45,15 @@ def export_web(config: PipelineConfig, layout: RunLayout) -> dict:
     _write_viz_index(track_df, viz_df, public_dir)
     _write_tsne(config, viz_embeddings, public_dir)
 
+    model_lab_snapshot = build_model_lab_snapshot(layout.root)
+    with (public_dir / "model_lab.json").open("w", encoding="utf-8") as handle:
+        json.dump(model_lab_snapshot, handle, separators=(",", ":"))
+
     summary = {
         "server_tracks": int(len(track_df)),
         "public_tracks": int(len(viz_df)),
         "model_version": layout.root.name,
+        "model_lab_path": str(public_dir / "model_lab.json"),
     }
     (layout.manifests_dir / "export_web.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary

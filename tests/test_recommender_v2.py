@@ -82,6 +82,7 @@ class RecommenderV2Tests(unittest.TestCase):
             self.assertGreater(export_summary["server_tracks"], 0)
             self.assertTrue((config.export.server_dir / "tracks.json").exists())
             self.assertTrue((config.export.public_dir / "viz_index.json").exists())
+            self.assertTrue((config.export.public_dir / "model_lab.json").exists())
 
     def test_split_is_reproducible(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
