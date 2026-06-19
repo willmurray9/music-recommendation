@@ -4,7 +4,7 @@ PYTHON ?= $(VENV)/bin/python
 CONFIG ?= config/recommender_v2.dev.toml
 RUN_ID ?= dev-verify
 
-.PHONY: venv install install-dev test test-pytest pipeline-help prepare-model-data train-model report-model verify-model web-install web-dev
+.PHONY: venv install install-dev test test-pytest pipeline-help prepare-model-data train-model report-model model-lab-snapshot export-web verify-model web-install web-dev
 
 venv:
 	$(PYTHON_BOOTSTRAP) -m venv $(VENV)
@@ -40,6 +40,12 @@ train-model:
 
 report-model:
 	$(PYTHON) -m src.recommender_v2 --config $(CONFIG) --run-id $(RUN_ID) report
+
+model-lab-snapshot:
+	$(PYTHON) -m src.recommender_v2 --config $(CONFIG) --run-id $(RUN_ID) model_lab_snapshot
+
+export-web:
+	$(PYTHON) -m src.recommender_v2 --config $(CONFIG) --run-id $(RUN_ID) export_web
 
 verify-model: prepare-model-data train-model
 
