@@ -2,11 +2,11 @@ export interface ModelLabMetricRow {
   model: string;
   split: 'test';
   metrics: {
-    'ndcg@10': number;
-    'recall@50': number;
-    'catalog_coverage@50': number;
-    'unique_artist_coverage@50': number;
-    'mean_popularity_percentile': number;
+    'ndcg@10': number | null;
+    'recall@50': number | null;
+    'catalog_coverage@50': number | null;
+    'unique_artist_coverage@50': number | null;
+    'mean_popularity_percentile': number | null;
   };
 }
 
@@ -61,11 +61,17 @@ export async function fetchModelLabSnapshot(): Promise<ModelLabSnapshot | null> 
   return response.json();
 }
 
-export function formatPercent(value: number): string {
+export function formatPercent(value: number | null): string {
+  if (value === null) {
+    return 'Unavailable';
+  }
   return `${(value * 100).toFixed(1)}%`;
 }
 
-export function formatSignedPercentDelta(value: number): string {
+export function formatSignedPercentDelta(value: number | null): string {
+  if (value === null) {
+    return 'Unavailable';
+  }
   const sign = value >= 0 ? '+' : '';
   return `${sign}${(value * 100).toFixed(1)} pts`;
 }

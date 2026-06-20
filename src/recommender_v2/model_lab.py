@@ -14,7 +14,7 @@ METRIC_LABELS = {
     "mean_popularity_percentile": "Mean popularity percentile",
 }
 
-COVERAGE_GATE_MIN_RATIO = 0.95
+NDCG_IMPROVEMENT_MIN_RATIO = 0.10
 
 
 def build_model_lab_snapshot(run_root: Path, output_path: Path | None = None) -> dict[str, Any]:
@@ -25,10 +25,11 @@ def build_model_lab_snapshot(run_root: Path, output_path: Path | None = None) ->
     corpus = _read_optional_json(manifests_dir / "build_corpus.json")
     split = _read_optional_json(manifests_dir / "split_eval.json")
     retrieval = _read_optional_json(manifests_dir / "train_retrieval.json")
+    reranker = _read_optional_json(manifests_dir / "train_reranker.json")
     report = _read_optional_json(metrics_dir / "report.json")
 
     scorecard = _scorecard_rows(report)
-    diagnostics = _diagnostics(report, scorecard)
+    diagnostics = _diagnostics(report, reranker)
     snapshot = {
         "schemaVersion": 1,
         "run": {
@@ -85,7 +86,7 @@ def _scorecard_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "model": row.get("model", "unknown"),
                 "split": "test",
                 "metrics": {
-                    key: float(metrics.get(key, 0.0) or 0.0)
+                    key: _optional_float(metrics.get(key)) if key in metrics else None
                     for key in METRIC_LABELS
                 },
             }
@@ -95,7 +96,10 @@ def _scorecard_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _diagnostics(report: dict[str, Any], scorecard: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _diagnostics(
+    report: dict[str, Any],
+    reranker_manifest: dict[str, Any],
+) -> list[dict[str, str]]:
     if not report:
         return [
             {
@@ -109,21 +113,12 @@ def _diagnostics(report: dict[str, Any], scorecard: list[dict[str, Any]]) -> lis
     retrieval = raw_by_model.get("retrieval", {})
     reranker = raw_by_model.get("reranker", {})
     promotion = report.get("promotion", {})
-    reranker_promoted = promotion.get("reranker_promoted")
+    reranker_promoted = promotion.get("reranker_promoted", reranker_manifest.get("promoted"))
     diagnostics: list[dict[str, str]] = []
     coverage_gate_warning_added = False
 
     if retrieval and reranker:
-        has_ndcg_metrics = _has_raw_metrics(retrieval, reranker, "ndcg@10")
-        has_coverage_metrics = "catalog_coverage@50" in retrieval and "catalog_coverage@50" in reranker
-        ndcg_delta = _metric_delta(retrieval, reranker, "ndcg@10") if has_ndcg_metrics else 0.0
-        metrics_coverage_failed = (
-            has_coverage_metrics
-            and float(reranker["catalog_coverage@50"] or 0.0)
-            < float(retrieval["catalog_coverage@50"] or 0.0) * COVERAGE_GATE_MIN_RATIO
-        )
-        has_coverage_gate_evidence = has_ndcg_metrics and ndcg_delta > 0 and metrics_coverage_failed
-        if reranker_promoted is False and has_coverage_gate_evidence:
+        if reranker_promoted is False and _explicit_coverage_gate_blocked(reranker_manifest):
             diagnostics.append(
                 {
                     "severity": "warning",
@@ -171,11 +166,15 @@ def _raw_test_metrics_by_model(report: dict[str, Any]) -> dict[str, dict[str, An
 
 
 def _has_raw_metrics(retrieval: dict[str, Any], reranker: dict[str, Any], key: str) -> bool:
-    return key in retrieval and key in reranker
+    return _optional_float(retrieval.get(key)) is not None and _optional_float(reranker.get(key)) is not None
 
 
 def _metric_delta(retrieval: dict[str, Any], reranker: dict[str, Any], key: str) -> float:
-    return float(reranker.get(key, 0.0) or 0.0) - float(retrieval.get(key, 0.0) or 0.0)
+    reranker_value = _optional_float(reranker.get(key))
+    retrieval_value = _optional_float(retrieval.get(key))
+    if reranker_value is None or retrieval_value is None:
+        raise ValueError(f"Cannot compute delta for missing metric {key}")
+    return reranker_value - retrieval_value
 
 
 def _tradeoff_body(retrieval: dict[str, Any], reranker: dict[str, Any]) -> str | None:
@@ -194,3 +193,51 @@ def _tradeoff_body(retrieval: dict[str, Any], reranker: dict[str, Any]) -> str |
     if not clauses:
         return None
     return f"Compared with retrieval, reranker changed {', '.join(clauses)}."
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _explicit_coverage_gate_blocked(reranker_manifest: dict[str, Any]) -> bool:
+    if not reranker_manifest:
+        return False
+
+    coverage_flags = _gate_flags(
+        reranker_manifest,
+        ("coverage_ok", "coverage_ok_val", "coverage_ok_test"),
+    )
+    diversity_flags = _gate_flags(
+        reranker_manifest,
+        ("diversity_ok", "diversity_ok_val", "diversity_ok_test"),
+    )
+    improvement_ratios = [
+        _optional_float(reranker_manifest.get(key))
+        for key in (
+            "ndcg10_improvement_ratio",
+            "ndcg10_improvement_ratio_val",
+            "ndcg10_improvement_ratio_test",
+        )
+    ]
+
+    if len(coverage_flags) != 3 or len(diversity_flags) != 3 or any(value is None for value in improvement_ratios):
+        return False
+    return (
+        not all(coverage_flags)
+        and all(diversity_flags)
+        and all(value >= NDCG_IMPROVEMENT_MIN_RATIO for value in improvement_ratios if value is not None)
+    )
+
+
+def _gate_flags(reranker_manifest: dict[str, Any], keys: tuple[str, ...]) -> list[bool]:
+    flags: list[bool] = []
+    for key in keys:
+        value = reranker_manifest.get(key)
+        if isinstance(value, bool):
+            flags.append(value)
+    return flags

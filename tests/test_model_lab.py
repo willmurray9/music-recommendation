@@ -12,7 +12,7 @@ class ModelLabSnapshotTests(unittest.TestCase):
     def test_snapshot_explains_reranker_tradeoff(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             run_root = Path(temp_dir) / "local-v3"
-            write_run_artifacts(run_root)
+            write_run_artifacts(run_root, include_reranker_manifest=True)
             output_path = run_root / "model_lab_snapshot.json"
 
             snapshot = build_model_lab_snapshot(run_root, output_path=output_path)
@@ -55,6 +55,19 @@ class ModelLabSnapshotTests(unittest.TestCase):
             self.assertIn("not confirmed", snapshot["diagnostics"][0]["title"].lower())
             self.assertIn("does not include enough", snapshot["diagnostics"][0]["body"])
 
+    def test_snapshot_does_not_infer_coverage_gate_without_reranker_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_root = Path(temp_dir) / "local-v3-without-reranker-manifest"
+            write_run_artifacts(run_root)
+
+            snapshot = build_model_lab_snapshot(run_root)
+            diagnostic_text = "\n".join(
+                f"{diagnostic['title']} {diagnostic['body']}" for diagnostic in snapshot["diagnostics"]
+            ).lower()
+
+            self.assertNotIn("coverage gate", diagnostic_text)
+            self.assertIn("reranker promotion not confirmed", diagnostic_text)
+
     def test_snapshot_does_not_claim_coverage_gate_for_allowed_drop(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             run_root = Path(temp_dir) / "allowed-coverage-drop"
@@ -81,7 +94,9 @@ class ModelLabSnapshotTests(unittest.TestCase):
 
             by_model = {row["model"]: row["metrics"] for row in snapshot["scorecard"]}
             self.assertEqual(by_model["retrieval"]["catalog_coverage@50"], 0.05501998031612773)
-            self.assertEqual(by_model["reranker"]["catalog_coverage@50"], 0.0)
+            self.assertIsNone(by_model["reranker"]["catalog_coverage@50"])
+            self.assertIsNone(by_model["reranker"]["unique_artist_coverage@50"])
+            self.assertIsNone(by_model["reranker"]["mean_popularity_percentile"])
             self.assertIn("reranker promotion not confirmed", diagnostic_text)
             self.assertIn("test ndcg@10 by +0.0192", diagnostic_text)
             self.assertNotIn("coverage gate", diagnostic_text)
@@ -107,6 +122,7 @@ def write_run_artifacts(
     partial_report: bool = False,
     allowed_coverage_drop: bool = False,
     partial_reranker_metrics: bool = False,
+    include_reranker_manifest: bool = False,
 ) -> None:
     manifests = run_root / "manifests"
     metrics = run_root / "metrics"
@@ -157,6 +173,27 @@ def write_run_artifacts(
     )
     if not include_report:
         return
+
+    if include_reranker_manifest:
+        (manifests / "train_reranker.json").write_text(
+            """
+{
+  "coverage_ok": false,
+  "coverage_ok_val": false,
+  "coverage_ok_test": false,
+  "diversity_ok": true,
+  "diversity_ok_val": true,
+  "diversity_ok_test": true,
+  "ndcg10_improvement_ratio": 0.85,
+  "ndcg10_improvement_ratio_val": 0.84,
+  "ndcg10_improvement_ratio_test": 0.64,
+  "promoted": false,
+  "val_promoted": false,
+  "test_promoted": false
+}
+""".strip(),
+            encoding="utf-8",
+        )
 
     if partial_report:
         (metrics / "report.json").write_text(

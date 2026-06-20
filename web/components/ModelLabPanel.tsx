@@ -23,6 +23,13 @@ const modelLabels: Record<string, string> = {
   reranker: 'Reranker',
 };
 
+function metricDelta(left: number | null, right: number | null): number | null {
+  if (left === null || right === null) {
+    return null;
+  }
+  return left - right;
+}
+
 export default function ModelLabPanel({ snapshot, isLoading, error }: ModelLabPanelProps) {
   if (isLoading) {
     return (
@@ -143,17 +150,17 @@ export default function ModelLabPanel({ snapshot, isLoading, error }: ModelLabPa
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <DeltaCard
               label="Ranking lift"
-              value={reranker.metrics['ndcg@10'] - retrieval.metrics['ndcg@10']}
+              value={metricDelta(reranker.metrics['ndcg@10'], retrieval.metrics['ndcg@10'])}
               goodWhenPositive
             />
             <DeltaCard
               label="Recall lift"
-              value={reranker.metrics['recall@50'] - retrieval.metrics['recall@50']}
+              value={metricDelta(reranker.metrics['recall@50'], retrieval.metrics['recall@50'])}
               goodWhenPositive
             />
             <DeltaCard
               label="Coverage change"
-              value={reranker.metrics['catalog_coverage@50'] - retrieval.metrics['catalog_coverage@50']}
+              value={metricDelta(reranker.metrics['catalog_coverage@50'], retrieval.metrics['catalog_coverage@50'])}
               goodWhenPositive
             />
           </div>
@@ -179,11 +186,11 @@ function DeltaCard({
   goodWhenPositive,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   goodWhenPositive: boolean;
 }) {
-  const isGood = goodWhenPositive ? value >= 0 : value <= 0;
-  const color = isGood ? 'text-spotify-green' : 'text-yellow-400';
+  const isGood = value === null ? null : goodWhenPositive ? value >= 0 : value <= 0;
+  const color = isGood === null ? 'text-spotify-light' : isGood ? 'text-spotify-green' : 'text-yellow-400';
   return (
     <div className="bg-spotify-black/40 rounded-lg p-4">
       <div className="text-spotify-light text-sm">{label}</div>
