@@ -5,6 +5,9 @@ import dynamic from 'next/dynamic';
 import SearchBar from '@/components/SearchBar';
 import ControlPanel from '@/components/ControlPanel';
 import TrackList from '@/components/TrackList';
+import ModelLabPanel from '@/components/ModelLabPanel';
+import { fetchModelLabSnapshot } from '@/lib/modelLab';
+import type { ModelLabSnapshot } from '@/lib/modelLab';
 
 // Dynamically import 3D visualization (client-side only)
 const Visualization3D = dynamic(() => import('@/components/Visualization3D'), {
@@ -38,6 +41,11 @@ interface RecommendationResult {
 }
 
 export default function Home() {
+  const [activeView, setActiveView] = useState<'explorer' | 'modelLab'>('explorer');
+  const [modelLabSnapshot, setModelLabSnapshot] = useState<ModelLabSnapshot | null>(null);
+  const [isLoadingModelLab, setIsLoadingModelLab] = useState(true);
+  const [modelLabError, setModelLabError] = useState<string | null>(null);
+
   // Visualization data
   const [tsneCoords, setTsneCoords] = useState<number[][] | null>(null);
   const [allTracks, setAllTracks] = useState<Track[]>([]);
@@ -96,6 +104,24 @@ export default function Home() {
     }
 
     loadVisualizationData();
+  }, []);
+
+  useEffect(() => {
+    async function loadModelLab() {
+      try {
+        setIsLoadingModelLab(true);
+        setModelLabError(null);
+        const snapshot = await fetchModelLabSnapshot();
+        setModelLabSnapshot(snapshot);
+      } catch (error) {
+        console.error('Error loading model lab snapshot:', error);
+        setModelLabError('Failed to load model lab snapshot');
+      } finally {
+        setIsLoadingModelLab(false);
+      }
+    }
+
+    loadModelLab();
   }, []);
 
   // Fetch recommendations when seeds or params change
@@ -175,11 +201,40 @@ export default function Home() {
           <p className="text-spotify-light mt-1">
             Explore 62,000+ tracks with controllable AI recommendations
           </p>
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={() => setActiveView('explorer')}
+              className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
+                activeView === 'explorer'
+                  ? 'bg-spotify-green text-black'
+                  : 'bg-spotify-gray text-white hover:bg-spotify-gray/80'
+              }`}
+            >
+              Explorer
+            </button>
+            <button
+              onClick={() => setActiveView('modelLab')}
+              className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
+                activeView === 'modelLab'
+                  ? 'bg-spotify-green text-black'
+                  : 'bg-spotify-gray text-white hover:bg-spotify-gray/80'
+              }`}
+            >
+              Model Lab
+            </button>
+          </div>
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {activeView === 'modelLab' ? (
+          <ModelLabPanel
+            snapshot={modelLabSnapshot}
+            isLoading={isLoadingModelLab}
+            error={modelLabError}
+          />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Panel - Search & Seeds */}
           <div className="lg:col-span-3 space-y-6">
             <SearchBar onTrackSelect={handleAddSeed} />
@@ -309,7 +364,8 @@ export default function Home() {
               )}
             </div>
           </div>
-        </div>
+          </div>
+        )}
       </div>
     </main>
   );
