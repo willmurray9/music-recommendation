@@ -1,19 +1,12 @@
 'use client';
 
-interface Track {
-  id: string;
-  name: string;
-  artist: string;
-  album: string;
-  genres: string[];
-  tags?: string[];
-  popularity: number;
-  playlistCount: number;
-  support?: number;
-  durationMs?: number;
-  releaseYear?: number | null;
-  modelVersion?: string;
-}
+import { useState } from 'react';
+import {
+  TrackDetailsButton,
+  TrackDetailsPanel,
+  TrackIdentity,
+} from '@/components/TrackIdentity';
+import { Track, getTrackDescription } from '@/lib/trackDisplay';
 
 interface TrackListProps {
   title: string;
@@ -36,9 +29,11 @@ export default function TrackList({
   scores = [],
   variant = 'seeds',
 }: TrackListProps) {
+  const [expandedTrackId, setExpandedTrackId] = useState<string | null>(null);
   const bgColor = variant === 'seeds' ? 'bg-spotify-green/10' : 'bg-yellow-500/10';
   const accentColor = variant === 'seeds' ? 'text-spotify-green' : 'text-yellow-400';
   const iconBg = variant === 'seeds' ? 'bg-spotify-green' : 'bg-yellow-500';
+  const actionLabel = variant === 'recommendations' ? 'Add as seed' : 'Select track';
 
   return (
     <div className="bg-spotify-gray/50 rounded-xl p-4">
@@ -48,54 +43,85 @@ export default function TrackList({
         <p className="text-spotify-light text-sm py-4 text-center">{emptyMessage}</p>
       ) : (
         <div className="space-y-2">
-          {tracks.map(({ track, index }, i) => (
-            <div
-              key={track.id}
-              className={`${bgColor} rounded-lg p-3 flex items-center gap-3 
-                         ${onSelect ? 'cursor-pointer hover:bg-opacity-80 transition' : ''}`}
-              onClick={() => onSelect?.(track, index)}
-            >
-              <div className={`w-8 h-8 ${iconBg} rounded flex items-center justify-center text-black font-bold text-sm`}>
-                {i + 1}
-              </div>
-              
-              <div className="flex-1 min-w-0">
-                <div className="text-white font-medium truncate">{track.name}</div>
-                <div className="text-spotify-light text-sm truncate">{track.artist}</div>
-              </div>
+          {tracks.map(({ track, index }, i) => {
+            const score = showScore ? scores[i] : undefined;
+            const detailsId = `track-details-${variant}-${track.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+            const isExpanded = expandedTrackId === track.id;
+            const description = getTrackDescription(track, { context: title, score });
 
-              {showScore && scores[i] !== undefined && (
-                <div className="text-spotify-light text-xs">
-                  {(scores[i] * 100).toFixed(0)}%
-                </div>
-              )}
-
-              <div className="text-right">
-                <div className="text-spotify-light text-xs">
-                  Pop: {track.popularity}
-                </div>
-                {track.genres.length > 0 && (
-                  <div className="text-spotify-light text-xs truncate max-w-[100px]">
-                    {track.genres[0]}
+            return (
+              <div
+                key={track.id}
+                className={`${bgColor} rounded-lg p-3 transition hover:bg-opacity-80`}
+                title={description}
+                aria-label={description}
+              >
+                <div className="flex items-start gap-3">
+                  <div className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded ${iconBg} text-sm font-bold text-black`}>
+                    {i + 1}
                   </div>
+
+                  {onSelect ? (
+                    <button
+                      type="button"
+                      onClick={() => onSelect(track, index)}
+                      className="min-w-0 flex-1 rounded-md text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spotify-green focus-visible:ring-offset-2 focus-visible:ring-offset-spotify-black"
+                      aria-label={`${actionLabel}. ${description}`}
+                      title={`${actionLabel}: ${description}`}
+                    >
+                      <TrackIdentity track={track} score={score} />
+                    </button>
+                  ) : (
+                    <TrackIdentity track={track} score={score} className="flex-1" />
+                  )}
+
+                  <div className="flex shrink-0 items-center gap-1">
+                    <TrackDetailsButton
+                      controlsId={detailsId}
+                      expanded={isExpanded}
+                      track={track}
+                      score={score}
+                      context={title}
+                      onClick={() => setExpandedTrackId(isExpanded ? null : track.id)}
+                    />
+
+                    {onSelect && variant === 'recommendations' && (
+                      <button
+                        type="button"
+                        onClick={() => onSelect(track, index)}
+                        className="inline-flex items-center gap-1 rounded-full bg-yellow-500 px-3 py-1.5 text-xs font-bold text-black transition hover:bg-yellow-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-300 focus-visible:ring-offset-2 focus-visible:ring-offset-spotify-black"
+                        aria-label={`Add as seed. ${description}`}
+                        title={`Add as seed: ${description}`}
+                      >
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 5v14M5 12h14" />
+                        </svg>
+                        Add
+                      </button>
+                    )}
+
+                    {onRemove && (
+                      <button
+                        type="button"
+                        onClick={() => onRemove(track.id)}
+                        className="track-icon-button text-spotify-light hover:text-white focus-visible:text-white"
+                        aria-label={`Remove seed track. ${description}`}
+                        title={`Remove seed track: ${description}`}
+                      >
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {isExpanded && (
+                  <TrackDetailsPanel id={detailsId} track={track} score={score} className="mt-3" />
                 )}
               </div>
-
-              {onRemove && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemove(track.id);
-                  }}
-                  className="text-spotify-light hover:text-white transition p-1"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

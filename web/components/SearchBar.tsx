@@ -1,22 +1,13 @@
 'use client';
 
 import { useState, useMemo, useRef, useEffect } from 'react';
+import {
+  TrackDetailsButton,
+  TrackDetailsPanel,
+  TrackIdentity,
+} from '@/components/TrackIdentity';
 import { debounce } from '@/lib/utils';
-
-interface Track {
-  id: string;
-  name: string;
-  artist: string;
-  album: string;
-  genres: string[];
-  tags?: string[];
-  popularity: number;
-  playlistCount: number;
-  support?: number;
-  durationMs?: number;
-  releaseYear?: number | null;
-  modelVersion?: string;
-}
+import { Track, getTrackDescription } from '@/lib/trackDisplay';
 
 interface SearchResult {
   track: Track;
@@ -33,7 +24,9 @@ export default function SearchBar({ onTrackSelect, placeholder = 'Search for son
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [expandedTrackId, setExpandedTrackId] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const resultsId = 'track-search-results';
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -51,6 +44,7 @@ export default function SearchBar({ onTrackSelect, placeholder = 'Search for son
       if (q.length < 2) {
         setResults([]);
         setIsOpen(false);
+        setExpandedTrackId(null);
         return;
       }
 
@@ -59,10 +53,12 @@ export default function SearchBar({ onTrackSelect, placeholder = 'Search for son
         const response = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=10`);
         const data = await response.json();
         setResults(data.results || []);
+        setExpandedTrackId(null);
         setIsOpen(true);
       } catch (error) {
         console.error('Search error:', error);
         setResults([]);
+        setExpandedTrackId(null);
       } finally {
         setIsLoading(false);
       }
@@ -81,6 +77,7 @@ export default function SearchBar({ onTrackSelect, placeholder = 'Search for son
     setQuery('');
     setResults([]);
     setIsOpen(false);
+    setExpandedTrackId(null);
   };
 
   return (
@@ -92,6 +89,8 @@ export default function SearchBar({ onTrackSelect, placeholder = 'Search for son
           onChange={handleInputChange}
           onFocus={() => results.length > 0 && setIsOpen(true)}
           placeholder={placeholder}
+          aria-controls={resultsId}
+          aria-label="Search tracks by song title or artist"
           className="w-full px-4 py-3 bg-spotify-gray text-white rounded-full 
                      placeholder-spotify-light focus:outline-none focus:ring-2 
                      focus:ring-spotify-green transition-all"
@@ -104,28 +103,71 @@ export default function SearchBar({ onTrackSelect, placeholder = 'Search for son
       </div>
 
       {isOpen && results.length > 0 && (
-        <div className="absolute z-50 w-full mt-2 bg-spotify-gray rounded-lg shadow-xl overflow-hidden">
-          {results.map((result) => (
-            <button
-              key={result.track.id}
-              onClick={() => handleSelect(result)}
-              className="w-full px-4 py-3 text-left hover:bg-spotify-black/50 
-                         transition-colors flex items-center gap-3"
-            >
-              <div className="w-10 h-10 bg-spotify-black rounded flex items-center justify-center">
-                <svg className="w-5 h-5 text-spotify-light" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                </svg>
+        <div
+          id={resultsId}
+          className="absolute z-50 mt-2 max-h-[70vh] w-full overflow-y-auto rounded-lg bg-spotify-gray shadow-xl"
+          role="list"
+          aria-label="Track search results"
+        >
+          {results.map((result) => {
+            const detailsId = `search-track-details-${result.track.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+            const isExpanded = expandedTrackId === result.track.id;
+            const description = getTrackDescription(result.track, { context: 'Search result' });
+
+            return (
+              <div
+                key={result.track.id}
+                className="border-b border-white/5 px-3 py-3 last:border-b-0 hover:bg-spotify-black/40"
+                title={description}
+                role="listitem"
+                aria-label={description}
+              >
+                <div className="flex items-start gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(result)}
+                    className="flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spotify-green focus-visible:ring-offset-2 focus-visible:ring-offset-spotify-gray"
+                    aria-label={`Add as seed from search. ${description}`}
+                    title={`Add as seed: ${description}`}
+                  >
+                    <span className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded bg-spotify-black">
+                      <svg className="h-5 w-5 text-spotify-light" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                      </svg>
+                    </span>
+                    <TrackIdentity track={result.track} compact maxGenres={2} />
+                  </button>
+
+                  <div className="flex shrink-0 items-center gap-1 pt-1">
+                    <TrackDetailsButton
+                      controlsId={detailsId}
+                      expanded={isExpanded}
+                      track={result.track}
+                      context="Search result"
+                      onClick={() => setExpandedTrackId(isExpanded ? null : result.track.id)}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => handleSelect(result)}
+                      className="inline-flex items-center gap-1 rounded-full bg-spotify-green px-3 py-1.5 text-xs font-bold text-black transition hover:bg-green-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spotify-green focus-visible:ring-offset-2 focus-visible:ring-offset-spotify-gray"
+                      aria-label={`Add as seed from search. ${description}`}
+                      title={`Add as seed: ${description}`}
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 5v14M5 12h14" />
+                      </svg>
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                {isExpanded && (
+                  <TrackDetailsPanel id={detailsId} track={result.track} className="mt-3" />
+                )}
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-white font-medium truncate">{result.track.name}</div>
-                <div className="text-spotify-light text-sm truncate">{result.track.artist}</div>
-              </div>
-              <div className="text-spotify-light text-xs">
-                {result.track.genres.slice(0, 2).join(', ')}
-              </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

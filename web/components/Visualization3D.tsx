@@ -1,18 +1,19 @@
 'use client';
 
-import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
+import {
+  Component,
+  ReactNode,
+  useRef,
+  useMemo,
+  useState,
+  useEffect,
+  useCallback,
+} from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsType } from 'three-stdlib';
-
-interface Track {
-  id: string;
-  name: string;
-  artist: string;
-  genres: string[];
-  popularity: number;
-}
+import { Track, getInlineMetadata, getTrackDescription } from '@/lib/trackDisplay';
 
 interface Visualization3DProps {
   coords: number[][];
@@ -21,6 +22,66 @@ interface Visualization3DProps {
   recommendedIndices?: number[];
   onTrackSelect?: (index: number) => void;
   colorBy?: 'popularity' | 'genre';
+}
+
+interface VisualizationErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface VisualizationErrorBoundaryState {
+  hasError: boolean;
+}
+
+function VisualizationFallback() {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-spotify-dark p-8">
+      <div className="max-w-md text-center">
+        <svg className="mx-auto mb-4 h-14 w-14 text-spotify-gray" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+        <p className="text-sm text-spotify-light">
+          The 3D view is unavailable in this browser, but search and recommendations still work.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function hasWebGLSupport(): boolean {
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(
+      window.WebGLRenderingContext &&
+      (canvas.getContext('webgl2') ||
+        canvas.getContext('webgl') ||
+        canvas.getContext('experimental-webgl'))
+    );
+  } catch {
+    return false;
+  }
+}
+
+class VisualizationErrorBoundary extends Component<
+  VisualizationErrorBoundaryProps,
+  VisualizationErrorBoundaryState
+> {
+  state: VisualizationErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): VisualizationErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('3D visualization failed:', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <VisualizationFallback />;
+    }
+
+    return this.props.children;
+  }
 }
 
 // Genre color mapping
@@ -276,9 +337,32 @@ function PointCloud({
             coords[hovered][2] * 50,
           ]}
         >
-          <div className="bg-black/90 text-white px-3 py-2 rounded-lg text-sm whitespace-nowrap pointer-events-none">
-            <div className="font-semibold">{tracks[hovered].name}</div>
-            <div className="text-gray-300">{tracks[hovered].artist}</div>
+          <div
+            className="pointer-events-none w-72 max-w-[80vw] rounded-lg border border-white/10 bg-black/90 px-3 py-2 text-sm text-white shadow-xl"
+            title={getTrackDescription(tracks[hovered], { context: '3D visualization point' })}
+          >
+            <div className="track-title-2 font-semibold">{tracks[hovered].name}</div>
+            <div className="mt-1 text-gray-300">
+              {tracks[hovered].artist}
+              {tracks[hovered].album && (
+                <span>
+                  <span aria-hidden="true"> · </span>
+                  {tracks[hovered].album}
+                </span>
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {getInlineMetadata(tracks[hovered]).map((item) => (
+                <span key={item} className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-gray-200">
+                  {item}
+                </span>
+              ))}
+              {tracks[hovered].genres.slice(0, 2).map((genre) => (
+                <span key={genre} className="rounded-full bg-spotify-green/20 px-2 py-0.5 text-[11px] text-spotify-green">
+                  {genre}
+                </span>
+              ))}
+            </div>
           </div>
         </Html>
       )}
@@ -320,12 +404,14 @@ function Scene(props: Visualization3DProps) {
 
 export default function Visualization3D(props: Visualization3DProps) {
   const [isClient, setIsClient] = useState(false);
+  const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
 
   useEffect(() => {
     setIsClient(true);
+    setWebglAvailable(hasWebGLSupport());
   }, []);
 
-  if (!isClient) {
+  if (!isClient || webglAvailable === null) {
     return (
       <div className="w-full h-full bg-spotify-dark flex items-center justify-center">
         <div className="text-spotify-light">Loading visualization...</div>
@@ -333,14 +419,24 @@ export default function Visualization3D(props: Visualization3DProps) {
     );
   }
 
+  if (!webglAvailable) {
+    return (
+      <div className="h-full w-full bg-gradient-to-b from-spotify-black to-spotify-dark">
+        <VisualizationFallback />
+      </div>
+    );
+  }
+
   return (
     <div className="w-full h-full bg-gradient-to-b from-spotify-black to-spotify-dark">
-      <Canvas
-        camera={{ position: [0, 0, 100], fov: 60 }}
-        gl={{ antialias: true }}
-      >
-        <Scene {...props} />
-      </Canvas>
+      <VisualizationErrorBoundary>
+        <Canvas
+          camera={{ position: [0, 0, 100], fov: 60 }}
+          gl={{ antialias: true }}
+        >
+          <Scene {...props} />
+        </Canvas>
+      </VisualizationErrorBoundary>
     </div>
   );
 }

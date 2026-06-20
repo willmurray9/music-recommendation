@@ -8,6 +8,7 @@ import TrackList from '@/components/TrackList';
 import ModelLabPanel from '@/components/ModelLabPanel';
 import { fetchModelLabSnapshot } from '@/lib/modelLab';
 import type { ModelLabSnapshot } from '@/lib/modelLab';
+import type { Track } from '@/lib/trackDisplay';
 
 // Dynamically import 3D visualization (client-side only)
 const Visualization3D = dynamic(() => import('@/components/Visualization3D'), {
@@ -18,21 +19,6 @@ const Visualization3D = dynamic(() => import('@/components/Visualization3D'), {
     </div>
   ),
 });
-
-interface Track {
-  id: string;
-  name: string;
-  artist: string;
-  album: string;
-  genres: string[];
-  tags?: string[];
-  popularity: number;
-  playlistCount: number;
-  support?: number;
-  durationMs?: number;
-  releaseYear?: number | null;
-  modelVersion?: string;
-}
 
 interface RecommendationResult {
   track: Track;
@@ -262,7 +248,7 @@ export default function Home() {
           {/* Center - 3D Visualization */}
           <div className="lg:col-span-6">
             <div className="bg-spotify-gray/30 rounded-xl overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-spotify-gray">
+              <div className="flex flex-col gap-3 px-4 py-3 border-b border-spotify-gray sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="text-white font-semibold">Track Embeddings</h2>
                 <div className="flex items-center gap-4">
                   <label className="flex items-center gap-2 text-sm text-spotify-light">
@@ -312,7 +298,7 @@ export default function Home() {
               </div>
 
               {/* Legend */}
-              <div className="px-4 py-3 border-t border-spotify-gray flex items-center gap-6 text-sm">
+              <div className="px-4 py-3 border-t border-spotify-gray flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-spotify-green rounded-full" />
                   <span className="text-spotify-light">Seed tracks</span>
@@ -321,7 +307,7 @@ export default function Home() {
                   <div className="w-3 h-3 bg-yellow-500 rounded-full" />
                   <span className="text-spotify-light">Recommendations</span>
                 </div>
-                <div className="text-spotify-light ml-auto">
+                <div className="text-spotify-light w-full sm:ml-auto sm:w-auto">
                   Click on points to add as seeds. Scroll to zoom, drag to rotate.
                 </div>
               </div>
