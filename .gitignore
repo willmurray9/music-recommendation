@@ -62,4 +62,5 @@ models/*.parquet
 models/*.pt
 models/*.pth
 *.log
+docs/superpowers/
 web/data/server/
