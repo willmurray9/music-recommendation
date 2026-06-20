@@ -197,6 +197,28 @@ To print and save a readable comparison report for an evaluated run:
 make report-model CONFIG=config/recommender_v2.toml RUN_ID=local-v3
 ```
 
+### Model Lab
+
+The Model Lab is the learning/debugging view for understanding how a run performed and what to improve next.
+
+Generate a report and snapshot for an evaluated run:
+
+```bash
+make report-model CONFIG=config/recommender_v2.toml RUN_ID=local-v3
+make model-lab-snapshot CONFIG=config/recommender_v2.toml RUN_ID=local-v3
+make export-web CONFIG=config/recommender_v2.toml RUN_ID=local-v3
+```
+
+Then run the app:
+
+```bash
+npm --prefix web run dev
+```
+
+Open `http://localhost:3000` and switch to the Model Lab tab.
+
+The current `local-v3` result is a useful debugging example: the reranker improves test-set NDCG and recall, but it fails promotion because catalog and artist coverage drop. That means the next modeling experiment should preserve the ranking lift while reducing popularity bias and coverage collapse.
+
 For a fresh full run with a specific config/run id, override them:
 
 ```bash
